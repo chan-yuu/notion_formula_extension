@@ -1,4 +1,6 @@
-# Notion Formula Auto Conversion Tool (MV3)
+# Notion Formula Auto Conversion Tool
+
+AI识别并转换 Notion 中的 LaTeX 文本公式，主要以chatgpt输出的内容为主
 
 ## 目录
 - `manifest.json`
@@ -22,11 +24,16 @@
    - Model: `qwen-plus`
 4. 点击“保存”。
 5. 刷新 Notion 页面。
+<img width="1116" height="1213" alt="PixPin_2026-03-05_20-18-41" src="https://github.com/user-attachments/assets/819f305e-9a13-4baf-96ab-0d585315f618" />
+
 
 ## 使用
 1. 打开 `https://www.notion.so/*` 页面。
 2. 右下角会出现转换面板。
 3. 点击按钮执行“识别+转换”。
+4. 复制chatgpt的内容：
+
+<img width="810" height="948" alt="PixPin_2026-03-05_20-20-00" src="https://github.com/user-attachments/assets/4321b09c-c895-4edc-a826-fad49aba018f" />
 
 ## 调试
 - 打开开发者工具 Console，可看到：
@@ -34,3 +41,7 @@
   - `[FormulaHelper] 转换中 ...`
 - 只识别不转换：
   - 在 Console 执行：`await window.__formulaDebugTest()`
+
+进入网页版notion，粘贴，然后开始转换
+
+https://github.com/user-attachments/assets/4c8f55d1-a0cf-49f0-ba77-e8bbf4248fbb
