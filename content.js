@@ -95,11 +95,11 @@
   }
 
   injectStyle(`
-    #formula-helper{position:fixed;right:20px;bottom:90px;z-index:9999;width:260px;background:#fff;border-radius:12px;box-shadow:rgba(0,0,0,.12) 0 10px 30px;padding:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-    #formula-helper button{width:100%;border:none;border-radius:8px;color:#fff;background:#2563eb;padding:10px;cursor:pointer;font-weight:600;margin-bottom:8px}
+    #formula-helper{position:fixed;right:20px;bottom:90px;z-index:9999;width:188px;background:#fff;border-radius:10px;box-shadow:rgba(0,0,0,.12) 0 10px 30px;padding:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+    #formula-helper button{width:100%;border:none;border-radius:7px;color:#fff;background:#2563eb;padding:6px 8px;cursor:pointer;font-weight:500;font-size:12px;margin-bottom:6px}
     #formula-helper button.processing{background:#ef4444}
-    #formula-helper #status-text{font-size:12px;color:#4b5563;line-height:1.4;min-height:34px;margin-bottom:8px;word-break:break-word}
-    #formula-helper #progress{height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+    #formula-helper #status-text{font-size:11px;color:#4b5563;line-height:1.35;min-height:30px;margin-bottom:7px;word-break:break-word}
+    #formula-helper #progress{height:5px;background:#e5e7eb;border-radius:999px;overflow:hidden}
     #formula-helper #bar{height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#3b82f6);transition:width .2s ease}
   `);
 
@@ -727,21 +727,41 @@
     try {
       const chunks = splitChunks(text);
       let aiAll = [];
+      let failCount = 0;
+      let firstFailMsg = '';
+
       for (let i = 0; i < chunks.length; i++) {
         if (stopFlag) break;
         if (typeof onProgress === 'function') onProgress(i + 1, chunks.length);
-        const items = await aiExtract(chunks[i].text);
-        const mapped = mapAI(chunks[i].text, items, chunks[i].start);
+
+        let mapped = [];
+        try {
+          const items = await aiExtract(chunks[i].text);
+          mapped = mapAI(chunks[i].text, items, chunks[i].start);
+        } catch (chunkErr) {
+          failCount += 1;
+          if (!firstFailMsg) firstFailMsg = chunkErr?.message || 'unknown';
+          if (DEBUG_MODE) {
+            dbg(`分块识别失败 ${i + 1}/${chunks.length}`, chunkErr?.message || chunkErr);
+          }
+        }
+
         const fallback = findParenLatexFallback(chunks[i].text, chunks[i].start);
         aiAll = merge(aiAll, mapped);
         aiAll = merge(aiAll, fallback);
         await sleep(80);
       }
+
+      if (failCount > 0) {
+        console.warn(`[FormulaHelper] AI分块识别失败 ${failCount}/${chunks.length}，已自动跳过失败分块。首个错误: ${firstFailMsg}`);
+      }
+
       const result = uniqByRange(aiAll.sort((a, b) => a.start - b.start));
       cache.set(text, result);
       return result;
     } catch (e) {
-      console.warn('AI识别失败，不执行本地回退:', e);
+      console.warn(`[FormulaHelper] AI识别流程失败: ${e?.message || e}`);
+      if (DEBUG_MODE) console.debug(e);
       cache.set(text, []);
       return [];
     }
