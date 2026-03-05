@@ -10,8 +10,10 @@
   let QWEN_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
   let QWEN_MODEL = 'qwen-plus';
   let TIMEOUT_MS = 45000;
-  const CHUNK_SIZE = 3500;
-  const CHUNK_OVERLAP = 1000;
+  const CHUNK_SIZE = 1600;
+  const CHUNK_OVERLAP = 320;
+  const MAX_CONVERT_PER_ROUND = 12;
+  const MAX_ROUNDS = 8;
   // 调试模式：true=打印AI识别日志
   let DEBUG_MODE = true;
   const CONFIG_KEYS = ['aiEnabled', 'apiKey', 'baseUrl', 'model', 'timeoutMs', 'debugMode'];
@@ -222,6 +224,79 @@
     return s;
   }
 
+  function isOuterParenWrapped(text) {
+    const s = String(text || '').trim();
+    if (!s) return false;
+    return hasBalancedOuterPair(s, '(', ')') || hasBalancedOuterPair(s, '（', '）');
+  }
+
+  function shouldConvertRaw(text) {
+    const s = String(text || '').trim();
+    if (!s) return false;
+    if (isOuterParenWrapped(s)) return true;
+    if (s.startsWith('$$') && s.endsWith('$$')) return true;
+    if (s.startsWith('$') && s.endsWith('$')) return true;
+    if (s.startsWith('\\(') && s.endsWith('\\)')) return true;
+    if (s.startsWith('\\[') && s.endsWith('\\]')) return true;
+    if (s.startsWith('`') && s.endsWith('`')) return true;
+    return false;
+  }
+
+  function findParenLatexFallback(text, offset = 0) {
+    const out = [];
+    const s = String(text || '');
+    if (!s) return out;
+
+    const openers = new Set(['(', '（']);
+    const pair = { '(': ')', '（': '）' };
+
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (!openers.has(ch)) continue;
+
+      const right = pair[ch];
+      let depth = 0;
+      let end = -1;
+      for (let j = i; j < s.length; j++) {
+        const c = s[j];
+        if (c === ch) depth += 1;
+        else if (c === right) {
+          depth -= 1;
+          if (depth === 0) {
+            end = j;
+            break;
+          }
+        }
+      }
+      if (end < 0) continue;
+
+      const raw = s.slice(i, end + 1);
+      const inner = stripOuterParens(raw);
+      const hasBackslash = /\\[a-zA-Z]+/.test(inner);
+      if (!hasBackslash) {
+        i = end;
+        continue;
+      }
+      if (raw.length > 260 || /[\n\r]/.test(raw) || !likelyLatex(inner)) {
+        i = end;
+        continue;
+      }
+
+      out.push({
+        start: offset + i,
+        end: offset + end + 1,
+        formula: raw,
+        type: 'inline',
+        content: stripWrap(raw),
+        priority: 260 + raw.length,
+        source: 'fallback'
+      });
+      i = end;
+    }
+
+    return out;
+  }
+
   function stripWrap(raw, content = '') {
     if ((content || '').trim()) return norm(stripOuterParens(content));
     let s = norm(raw);
@@ -398,7 +473,10 @@
       '4) 必须识别: $...$, $$...$$, \\(...\\), \\[...\\], 反引号公式, 反引号中的隐式LaTeX, 反斜杠复杂表达式。',
       '5) 混合表达式必须整体输出，例如 \\mathcal{C}_{\\text{nat}}(\\tau^{\\text{Adv}}\\mid\\mathcal{X})、\\Pi_{\\mathcal{C}_{\\text{corr}}}、p_{\\text{pred}}(\\cdot\\mid\\mathcal{X})。',
       '6) @notion、Markdown、中文段落中的公式同样要抽取，不可忽略。',
-      '7) 排除非公式的描写性的，他们并不是公式。比如\\label \\cite \\autoref \\pageref \\eqref \\ref。',
+      '7) 重点不要漏: (\\mathcal{C}_{\\text{corr}})、(\\mathbf{p}^{\\text{Adv}}[k]\\in\\mathbb{R}^2)、(\\mathbf{p}^{\\text{Adv}}[k]) 等“被普通括号包裹”的公式。',
+      '8) 即使公式书写不规范（例如缺少下划线、括号风格混用），只要是明显LaTeX片段也要抽取，raw仍必须原样拷贝。',
+      '9) 如果同一个符号在不同位置出现，必须全部列出，不得去重。',
+      '10) 排除非公式的描写性的，他们并不是公式。比如\\label \\cite \\autoref \\pageref \\eqref \\ref。',
       '无公式时输出 {"formulas":[]}'
     ].join('\n');
 
@@ -618,6 +696,7 @@
       const leftCtx = seg.text.slice(Math.max(0, localStart - 24), localStart);
       const rightCtx = seg.text.slice(localEnd, Math.min(seg.text.length, localEnd + 24));
       const exactRaw = seg.text.slice(localStart, localEnd) || f.formula;
+      if (!shouldConvertRaw(exactRaw)) continue;
 
       byEditor.get(seg.editor).push({
         ...f,
@@ -641,7 +720,7 @@
 
     return { targets, total };
   }
-  async function detect(text) {
+  async function detect(text, onProgress) {
     await ensureConfig();
     if (cache.has(text)) return cache.get(text).map(x => ({ ...x }));
     if (!AI_ENABLED || !QWEN_API_KEY) { cache.set(text, []); return []; }
@@ -650,9 +729,12 @@
       let aiAll = [];
       for (let i = 0; i < chunks.length; i++) {
         if (stopFlag) break;
+        if (typeof onProgress === 'function') onProgress(i + 1, chunks.length);
         const items = await aiExtract(chunks[i].text);
         const mapped = mapAI(chunks[i].text, items, chunks[i].start);
+        const fallback = findParenLatexFallback(chunks[i].text, chunks[i].start);
         aiAll = merge(aiAll, mapped);
+        aiAll = merge(aiAll, fallback);
         await sleep(80);
       }
       const result = uniqByRange(aiAll.sort((a, b) => a.start - b.start));
@@ -670,8 +752,9 @@
     const { fullText, segments } = buildGlobalDocument(es);
     if (!fullText.trim()) return { targets: [], total: 0 };
 
-    setStatus(`AI识别中 1/1...`);
-    const globalFormulas = await detect(fullText);
+    const globalFormulas = await detect(fullText, (cur, total) => {
+      setStatus(`AI识别中 ${cur}/${total}...`);
+    });
     printAiSummary(globalFormulas);
 
     const distributed = distributeFormulasToEditors(globalFormulas, segments);
@@ -1015,6 +1098,17 @@
     return { ok: true };
   }
 
+  function buildRoundQueue(targets, limit) {
+    const queue = [];
+    for (const group of targets.slice().reverse()) {
+      for (const f of group.formulas.slice().reverse()) {
+        queue.push({ editor: group.editor, formula: f });
+        if (queue.length >= limit) return queue;
+      }
+    }
+    return queue;
+  }
+
   async function runConvert() {
     if (running) return;
     running = true; stopFlag = false;
@@ -1027,32 +1121,60 @@
         setStatus('未配置API Key，请先打开扩展选项填写', 4000);
         return;
       }
-      const { targets, total } = await collectTargets();
-      lastAiTotal = total;
-      if (!total) { setStatus('AI未识别到可转换公式', 2500); return; }
+      let ok = 0, fail = 0, skipped = 0;
+      let round = 0;
 
-      setStatus(`检测到 ${total} 个公式，开始转换...`);
-      let done = 0, ok = 0, fail = 0, skipped = 0;
+      while (!stopFlag && round < MAX_ROUNDS) {
+        round += 1;
+        cache.clear();
 
-      for (const group of targets.reverse()) {
-        if (stopFlag) break;
-        for (const f of group.formulas.slice().reverse()) {
+        const { targets, total } = await collectTargets();
+        lastAiTotal = total;
+
+        if (!total) {
+          if (round === 1) setStatus('AI未识别到可转换公式', 2500);
+          break;
+        }
+
+        const queue = buildRoundQueue(targets, MAX_CONVERT_PER_ROUND);
+        if (!queue.length) break;
+
+        let roundDone = 0;
+        let roundSuccess = 0;
+        setStatus(`第${round}轮：识别到 ${total} 个，准备转换 ${queue.length} 个...`);
+
+        for (const item of queue) {
           if (stopFlag) break;
-          const res = await convertOne(group.editor, f);
-          done++;
-          if (res.ok) ok++;
-          else if (res.reason === 'already-converted') skipped++;
-          else fail++;
+          const f = item.formula;
+          const res = await convertOne(item.editor, f);
+
+          roundDone++;
+          if (res.ok) {
+            ok++;
+            roundSuccess++;
+          } else if (res.reason === 'already-converted') {
+            skipped++;
+            roundSuccess++;
+          } else {
+            fail++;
+          }
+
           if (!res.ok && DEBUG_MODE) {
             dbg('转换失败', { reason: res.reason, formula: f.formula, start: f.start, end: f.end });
           }
-          setProgress(done, total);
-          setStatus(`转换中 ${done}/${total}，成功 ${ok}，跳过 ${skipped}，失败 ${fail}`);
+
+          setProgress(roundDone, queue.length);
+          setStatus(`第${round}轮 ${roundDone}/${queue.length}，累计成功 ${ok}，跳过 ${skipped}，失败 ${fail}`);
           await sleep(80);
+        }
+
+        if (roundSuccess === 0 && roundDone > 0) {
+          setStatus(`第${round}轮未成功命中，停止以避免重复空转`, 3000);
+          break;
         }
       }
 
-      if (stopFlag) setStatus(`已取消，已完成 ${ok} 个`, 3000);
+      if (stopFlag) setStatus(`已取消，累计成功 ${ok}`, 3000);
       else setStatus(`完成：成功 ${ok}，跳过 ${skipped}，失败 ${fail}`, 3500);
     } catch (e) {
       console.error(e);
