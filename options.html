@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Notion Formula Helper 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>Notion Formula Helper</h1>
+    <p class="desc">配置 AI 识别参数。保存后刷新 Notion 页面生效。</p>
+
+    <label class="field">
+      <span>DashScope API Key</span>
+      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span>Base URL</span>
+      <input id="baseUrl" type="text" value="https://dashscope.aliyuncs.com/compatible-mode/v1">
+    </label>
+
+    <label class="field">
+      <span>Model</span>
+      <input id="model" type="text" value="qwen-plus">
+    </label>
+
+    <label class="field">
+      <span>Timeout (ms)</span>
+      <input id="timeoutMs" type="number" min="1000" step="500" value="45000">
+    </label>
+
+    <label class="check">
+      <input id="aiEnabled" type="checkbox" checked>
+      <span>启用 AI 识别</span>
+    </label>
+
+    <label class="check">
+      <input id="debugMode" type="checkbox" checked>
+      <span>启用调试日志</span>
+    </label>
+
+    <div class="actions">
+      <button id="saveBtn">保存</button>
+      <button id="resetBtn" class="ghost">恢复默认</button>
+    </div>
+
+    <p id="status" class="status"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
