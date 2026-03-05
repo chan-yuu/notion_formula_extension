@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Notion Formula Auto Conversion Tool",
+  "version": "3.1.0",
+  "description": "AI识别并转换 Notion 中的 LaTeX 文本公式",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.notion.so/*",
+    "https://dashscope.aliyuncs.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.notion.so/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Notion Formula Helper"
+  }
+}
